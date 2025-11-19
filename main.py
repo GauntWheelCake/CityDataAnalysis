@@ -1,5 +1,4 @@
-from matplotlib_functions import matplotlib_main
-from folium_functions import folium_main
+from heat_map import matplotlib_main, folium_main
 from utils import *
 
 

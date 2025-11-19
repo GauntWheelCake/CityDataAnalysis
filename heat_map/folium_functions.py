@@ -9,8 +9,8 @@ import os
 import csv
 import json
 from pathlib import Path
-from utils import *
-from gen_functions import *
+from ..utils import *
+from ..gen_functions import *
 
 
 def create_map_data(samples, grid_size_km=1.0):
