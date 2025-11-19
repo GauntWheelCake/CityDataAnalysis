@@ -9,8 +9,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LogNorm, LinearSegmentedColormap
-from utils import *
-from gen_functions import *
+from ..utils import *
+from ..gen_functions import *
 
 
 def create_map_data(samples, grid_size_km=1.0):
@@ -233,7 +233,7 @@ def create_heatmap_matplotlib(map_data, output_file="heatmap.png", use_log_norm=
 
     # 保存图片
     plt.tight_layout()
-    plt.savefig(f"{dataset_path}\\{processed_path}\\{output_file}", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{processed_path}\\{output_file}", dpi=300, bbox_inches='tight')
     plt.close()
 
     print(f"带地图轮廓的热力图已保存为: {output_file}")
@@ -307,7 +307,7 @@ def create_heatmap_simple(map_data, output_file="heatmap.png", use_log_norm=True
 
     # 保存图片
     plt.tight_layout()
-    plt.savefig(f"{dataset_path}\\{processed_path}\\{output_file}", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{processed_path}\\{output_file}", dpi=300, bbox_inches='tight')
     plt.close()
 
     print(f"静态热力图已保存为: {output_file}")
@@ -432,7 +432,7 @@ def create_heatmap_extreme_normalization(map_data, output_file="heatmap_extreme.
 
     # 保存图片
     plt.tight_layout()
-    plt.savefig(f"{dataset_path}\\{processed_path}\\{output_file}", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{processed_path}\\{output_file}", dpi=300, bbox_inches='tight')
     plt.close()
 
     print(f"极端归一化热力图已保存为: {output_file}")

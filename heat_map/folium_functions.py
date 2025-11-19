@@ -236,8 +236,8 @@ def create_heatmap_folium(map_data, samples, output_file="heatmap.html", use_gri
     m.get_root().html.add_child(folium.Element(title_html))
 
     # 保存地图
-    os.makedirs(f"{dataset_path}\\{processed_path}", exist_ok=True)
-    m.save(f"{dataset_path}\\{processed_path}\\{output_file}")
+    os.makedirs(f"{processed_path}", exist_ok=True)
+    m.save(f"{processed_path}\\{output_file}")
     print(f"热力图已保存为: {output_file}")
     return m
 
