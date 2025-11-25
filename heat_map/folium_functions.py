@@ -1,16 +1,59 @@
 import folium
 from folium.plugins import HeatMap
 from gen_functions import *
+# --- 导入日期处理模块 ---
+import datetime
 
+try:
+    from chinese_calendar import is_workday, is_holiday, get_holiday_detail
+
+    HAS_CALENDAR = True
+except ImportError:
+    HAS_CALENDAR = False
+
+# --- 日期判断辅助函数 ---
+def get_date_type_name(date_str):
+    """
+    根据日期返回：'工作日'、'周末' 或 '具体的节日名称'
+    """
+    try:
+        # 解析日期字符串，截取前10位 (YYYY-MM-DD)
+        dt = datetime.datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+
+        if HAS_CALENDAR:
+            # 1. 如果是工作日（包含调休补班的周末）
+            if is_workday(dt):
+                return "工作日"
+
+            # 2. 如果是休息日，检查是否有具体节日名称
+            # get_holiday_detail 返回 (bool, str)，例如 (True, '端午节')
+            is_hol, hol_name = get_holiday_detail(dt)
+
+            if is_hol and hol_name:
+                # 核心修改：直接返回具体的节日名称！
+                # 注意：有些版本的库可能返回英文 (如 "Dragon Boat Festival")，
+                # 如果介意英文，可以在这里加一个简单的翻译字典。
+                return "节假日: " + hol_name
+            else:
+                # 只是普通休息日，没有节日名
+                return "周末"
+        else:
+            # 降级逻辑（未安装库时）
+            if dt.weekday() < 5:
+                return "工作日"
+            else:
+                return "周末"
+
+    except Exception as e:
+        # print(f"日期解析错误: {e}")
+        return "未知日期"
 
 def create_map_data(samples, grid_size_km=1.0):
     """
     将地图分割为指定边长的网格，统计每个网格中出现过的不同人数
-
     参数:
     samples: 字典，包含所有轨迹数据
     grid_size_km: 网格边长，单位千米，默认为1.0km
-
     返回:
     map_data: 字典，包含网格统计信息
     """
@@ -19,29 +62,33 @@ def create_map_data(samples, grid_size_km=1.0):
     EARTH_RADIUS_KM = 6371.0
 
     def lon_to_km(lon, lat):
-        """将经度转换为千米"""
+        """将经度转换为千米
+            math.cos(..)计算参考纬度的余弦值。用来修正不同纬度下的经度线长度差异的缩放因子。
+        """
+
         return EARTH_RADIUS_KM * math.radians(lon) * math.cos(math.radians(lat))
 
     def lat_to_km(lat):
         """将纬度转换为千米"""
         return EARTH_RADIUS_KM * math.radians(lat)
 
-    def km_to_lon(x_km, y_km):
+    def km_to_lon(x_km, y_km): #####
         """将千米转换为经度"""
         lat = math.degrees(y_km / EARTH_RADIUS_KM)
         lon = math.degrees(x_km / (EARTH_RADIUS_KM * math.cos(math.radians(lat))))
         return lon, lat
 
-    def km_to_lat(y_km):
+    def km_to_lat(y_km): #####
         """将千米转换为纬度"""
         return math.degrees(y_km / EARTH_RADIUS_KM)
 
     # 用于存储每个网格中不同用户的集合
     grid_people = defaultdict(set)
-
     # 存储经纬度范围
     min_lon, max_lon = float('inf'), float('-inf')
     min_lat, max_lat = float('inf'), float('-inf')
+
+    cleaned_count = 0
 
     # 遍历所有文件的数据
     for filename, traces in samples.items():
@@ -51,7 +98,7 @@ def create_map_data(samples, grid_size_km=1.0):
                 lon = float(trace["lo"])
                 lat = float(trace["la"])
 
-                # 更新经纬度范围
+                # 更新经纬度范围。
                 min_lon = min(min_lon, lon)
                 max_lon = max(max_lon, lon)
                 min_lat = min(min_lat, lat)
@@ -72,16 +119,17 @@ def create_map_data(samples, grid_size_km=1.0):
             except (ValueError, KeyError) as e:
                 print(f"数据格式错误: {e}, 跳过该记录")
                 continue
+            if cleaned_count > 0:
+                print(f"已清洗剔除 {cleaned_count} 个非中国境内的坐标点")
+
 
     # 转换为最终的map_data格式
     map_data = {
         "grid_size_km": grid_size_km,
         "earth_radius_km": EARTH_RADIUS_KM,
         "geo_bounds": {
-            "min_lon": min_lon,
-            "max_lon": max_lon,
-            "min_lat": min_lat,
-            "max_lat": max_lat
+            "min_lon": min_lon, "max_lon": max_lon,
+            "min_lat": min_lat, "max_lat": max_lat
         },
         "grids": []
     }
@@ -113,7 +161,7 @@ def create_map_data(samples, grid_size_km=1.0):
     return map_data
 
 
-def create_heatmap_folium(map_data, samples, output_file="heatmap.html", use_grid_data=True, show_china_outline=True):
+def create_heatmap_folium(map_data, samples, output_file="heatmap.html", use_grid_data=True, show_china_outline=True, date_str="", day_type=""):
     """
     使用Folium创建交互式热力图
 
@@ -123,6 +171,10 @@ def create_heatmap_folium(map_data, samples, output_file="heatmap.html", use_gri
     output_file: 输出文件名
     use_grid_data: 是否使用网格数据（True）或原始数据（False）
     show_china_outline: 是否显示中国地图轮廓
+
+    新增参数:
+    date_str: 日期字符串 (例如 "2024-06-08")
+    day_type: 日期类型 (例如 "非工作日")
     """
 
     # 根据数据源选择热力图数据
@@ -220,9 +272,19 @@ def create_heatmap_folium(map_data, samples, output_file="heatmap.html", use_gri
 
     # 添加标题和说明
     grid_size_km = map_data.get("grid_size_km", 1.0)
+
+    # 动态构建标题文本
+    base_title = f"人口分布热力图 ({grid_size_km}km×{grid_size_km}km网格)"
+    if date_str:
+        # 如果有日期信息，拼接到标题后面
+        full_title = (f"{base_title}<br>"
+                      f"<span style='font-size:16px'>{date_str} {day_type}</span>")
+    else:
+        full_title = base_title
+
     title_html = f'''
-                 <h3 align="center" style="font-size:20px"><b>人口分布热力图 ({grid_size_km}km×{grid_size_km}km网格)</b></h3>
-                 '''
+                     <h3 align="center" style="font-size:20px"><b>{full_title}</b></h3>
+                     '''
     m.get_root().html.add_child(folium.Element(title_html))
 
     # 保存地图
@@ -320,19 +382,33 @@ def folium_main():
     if debugging_save_file:
         save_json(six_six_samples, six_six_path)
 
-    grid_sizes = [0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]  # 单位：千米
+    # 1. 获取日期和类型 (用于网页标题显示)
+    date_str = six_six_path[:10]  # 例如 "2024-10-02"
+    day_type = get_date_type_name(date_str)  # 例如 "节假日: National Day"
+
+    print(f"当前处理日期: {date_str} ({day_type})")
+
+    grid_sizes = [0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
+
     for grid_size in grid_sizes:
         map_data = create_map_data(six_six_samples, grid_size_km=grid_size)
 
-        if debugging_save_file:
-            save_json(map_data, f"{map_data_path}\\{six_six_path}_grid_{grid_size}km")
+        # 2. 修改文件名生成逻辑 (仅保留 日期 + 网格大小)
+        # 这样文件名就是安全的，如: "2024-10-02_grid_0.5km"
+        base_name = f"{date_str}_grid_{grid_size}km"
 
+        if debugging_save_file:
+            save_json(map_data, f"{map_data_path}\\{base_name}")
+
+        # 3. 生成网页 (将详细的 day_type 传进去，显示在 HTML 标题里)
         create_heatmap_folium(
             map_data,
             six_six_samples,
-            f"{map_data_path}\\{six_six_path}_grid_{grid_size}km.html",
+            f"{map_data_path}\\{base_name}.html",  # 文件名只有日期和网格
             use_grid_data=True,
-            show_china_outline=True
+            show_china_outline=True,
+            date_str=date_str,  # 传参：日期
+            day_type=day_type  # 传参：详细类型 (包含节日名)
         )
 
     # 方法2: 创建多个网格大小的比较
