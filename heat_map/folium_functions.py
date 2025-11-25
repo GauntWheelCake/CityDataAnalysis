@@ -12,7 +12,6 @@ from utils import debugging_save_file, map_data_path, processed_path, six_six_pa
 
 try:
     from chinese_calendar import get_holiday_detail, is_workday
-
     HAS_CALENDAR = True
 except ImportError:
     HAS_CALENDAR = False
@@ -200,7 +199,11 @@ def create_heatmap_folium(
         else None
     )
 
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=10, tiles="OpenStreetMap")
+    m = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=10,
+        tiles=None # 不加载默认底图
+    ) # 第一个图层
 
     if show_china_outline:
         folium.TileLayer(
@@ -212,12 +215,21 @@ def create_heatmap_folium(
         ).add_to(m)
 
         folium.TileLayer(
-            tiles="https://{s}.tile.openstreetmap.org/{z}/{y}/{x}.png",
+            tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
             attr="OpenStreetMap",
-            name="街道地图",
+            name="街道地图-OpenStreetMap",
             overlay=False,
             control=True,
-        ).add_to(m)
+        ).add_to(m) # WGS-84 GPS坐标
+
+        # 添加高德街道图 (速度快，且适合中国大陆)
+        folium.TileLayer(
+            tiles='http://webrd02.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+            attr='高德地图',
+            name='高德街道',
+            overlay=False,
+            control=True
+        ).add_to(m) # GCJ-02 GPS坐标
 
     HeatMap(
         heat_data,
@@ -346,7 +358,7 @@ def folium_main():
 
     print(f"当前处理日期: {date_str} ({day_type})")
 
-    grid_sizes = [0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
+    grid_sizes = [0.5]
 
     for grid_size in grid_sizes:
         map_data = create_map_data(six_six_samples, grid_size_km=grid_size)
