@@ -1,16 +1,6 @@
 import folium
 from folium.plugins import HeatMap
-from datetime import datetime
-import numpy as np
-import math
-from collections import defaultdict
-from progress.bar import Bar
-import os
-import csv
-import json
-from pathlib import Path
-from ..utils import *
-from ..gen_functions import *
+from gen_functions import *
 
 
 def create_map_data(samples, grid_size_km=1.0):
