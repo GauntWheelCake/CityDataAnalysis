@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import Dict, Iterable, List, MutableMapping, Tuple
 
 import folium
+import numpy as np
 from folium.plugins import HeatMap
 
 from gen_functions import read_trace_files, save_json
@@ -203,9 +204,18 @@ def create_heatmap_folium(
         location=[center_lat, center_lon],
         zoom_start=10,
         tiles=None # 不加载默认底图
-    ) # 第一个图层
+    )
 
     if show_china_outline:
+        # 第一个图层
+        folium.TileLayer(
+            tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            attr="OpenStreetMap",
+            name="街道地图-OpenStreetMap",
+            overlay=False,
+            control=True,
+        ).add_to(m)  # WGS-84 GPS坐标
+
         folium.TileLayer(
             tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
             attr="Esri",
@@ -213,14 +223,6 @@ def create_heatmap_folium(
             overlay=False,
             control=True,
         ).add_to(m)
-
-        folium.TileLayer(
-            tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-            attr="OpenStreetMap",
-            name="街道地图-OpenStreetMap",
-            overlay=False,
-            control=True,
-        ).add_to(m) # WGS-84 GPS坐标
 
         # 添加高德街道图 (速度快，且适合中国大陆)
         folium.TileLayer(
@@ -268,17 +270,60 @@ def create_heatmap_folium(
 
 
 def add_grid_boundaries(map_obj: folium.Map, map_data: Dict):
-    """在地图上绘制网格边界，并用颜色标记人数级别。"""
+    """
+    在地图上绘制网格边界，使用【分位数映射】(Quantile Mapping) 动态着色。
+
+    原理：
+    1. 统计所有非零网格的人数。
+    2. 计算 20%, 40%, 60%, 80% 的分位数值。
+    3. 根据数值落在哪个区间，分配对应的颜色。
+    """
 
     grid_size_km = map_data.get("grid_size_km", 1.0)
+    grids = map_data.get("grids", [])
 
-    for grid in map_data.get("grids", []):
+    # --- 核心逻辑开始：计算分位数阈值 ---
+
+    # 1. 提取有效数据
+    # 我们只关心“有人的地方”内部的密度差异，所以排除 0 值。
+    # 如果包含大量 0 值，会导致低分位数的阈值全部为 0，颜色区分度降低。
+    valid_counts = [g["people_count"] for g in grids if g["people_count"] > 0]
+
+    if not valid_counts:
+        return
+
+    # 2. 定义分位点 (0% - 20% - 40% - 60% - 80% - 100%)
+    # 我们将数据切分为 5 等份
+    quantiles = [20, 40, 60, 80]
+
+    # 3. 使用 numpy 计算对应的具体数值阈值
+    # 例如：如果 thresholds[3] 是 100，意味着 80% 的网格人数都小于等于 100
+    thresholds = np.percentile(valid_counts, quantiles)
+
+    # 打印出来方便调试，看看你的数据分布大概是什么样
+    print(f"【分位数统计】总有数据网格数: {len(valid_counts)}")
+    print(
+        f"【颜色阈值】: 蓝色 < {thresholds[0]} <= 青色 < {thresholds[1]} <= 绿色 < {thresholds[2]} <= 橙色 < {thresholds[3]} <= 红色")
+
+    # 4. 定义颜色方案 (从冷色到暖色)
+    colors = [
+        '#3b528b',  # Level 1: 深蓝 (最冷) - 对应底部 20%
+        '#21918c',  # Level 2: 青色
+        '#5ec962',  # Level 3: 绿色 (中等)
+        '#fde725',  # Level 4: 黄色
+        '#ff0000'  # Level 5: 红色 (最热) - 对应顶部 20%
+    ]
+    # --- 核心逻辑结束 ---
+
+    for grid in grids:
         center_lat = grid["center_lat"]
         center_lon = grid["center_lon"]
         count = grid["people_count"]
 
+        # 计算网格的矩形边界 (这部分逻辑保持不变)
         lat_degree_per_km = 1 / 110.574
-        lon_degree_per_km = 1 / (111.320 * math.cos(math.radians(center_lat)))
+        # 注意：这里加了个 max(..., 0.0001) 防止极地地区 cos 为 0 导致除零错误，虽然在中国不太可能发生
+        lon_degree_per_km = 1 / (111.320 * max(math.cos(math.radians(center_lat)), 0.0001))
 
         half_lat = grid_size_km * lat_degree_per_km / 2
         half_lon = grid_size_km * lon_degree_per_km / 2
@@ -288,28 +333,40 @@ def add_grid_boundaries(map_obj: folium.Map, map_data: Dict):
             [center_lat + half_lat, center_lon + half_lon],
         ]
 
+        # --- 着色逻辑 ---
         if count == 0:
-            color = "gray"
-        elif count < 5:
-            color = "blue"
-        elif count < 10:
-            color = "green"
-        elif count < 20:
-            color = "yellow"
-        elif count < 50:
-            color = "orange"
+            # 没有人的网格：
+            continue
+            # 建议设为灰色且非常透明，或者直接不画（continue），这里为了保留网格感设为淡灰
+            # color = "gray"
+            # fill_opacity = 0.05
+            # weight = 0  # 去掉边框，减少视觉干扰
         else:
-            color = "red"
+            # 有人的网格：
+            # np.searchsorted 会返回 count 应该插入 thresholds 的索引位置
+            # 如果 count < 20%阈值，返回 0 -> 对应 colors[0] (深蓝)
+            # 如果 count > 80%阈值，返回 4 -> 对应 colors[4] (红色)
+            idx = np.searchsorted(thresholds, count)
 
+            # 这里的 idx 有可能取到 len(thresholds)，即 4，正好对应 colors 的最后一个索引
+            # 但为了安全起见（防止浮点数误差），限制一下最大索引
+            idx = min(idx, len(colors) - 1)
+
+            color = colors[idx]
+            fill_opacity = 0.6  # 有数据的格子稍微不透明一点，突出显示
+            weight = 0  # 【重要】去掉矩形的描边！
+            # 如果不去掉，当地图缩小时，密密麻麻的黑色边框会把颜色完全遮住，变成一团黑。
+
+        # 绘制矩形
         folium.Rectangle(
             bounds=bounds,
-            color=color,
+            color=color,  # 填充颜色
             fill=True,
-            fill_opacity=0.2,
-            weight=1,
+            fill_opacity=fill_opacity,
+            weight=weight,  # 边框宽度 (0表示无边框)
             popup=f"人数: {count}",
+            # tooltip=f"人数: {count}"  # 鼠标悬停时直接显示数值，体验更好
         ).add_to(map_obj)
-
 
 def create_comparison_heatmaps(
     samples: MutableMapping[str, Iterable[dict]], grid_sizes: Iterable[float] = (1.0, 5.0, 10.0, 20.0)
