@@ -52,6 +52,17 @@ def _collect_coordinates(samples: MutableMapping[str, Iterable[dict]]) -> Tuple[
     return np.array(coords), meta
 
 
+def _downsample(coords_deg: np.ndarray, *, max_points: int | None, random_state: int) -> np.ndarray:
+    """如果点数超过 ``max_points``，随机下采样。"""
+
+    if max_points is None or coords_deg.shape[0] <= max_points:
+        return coords_deg
+
+    rng = np.random.default_rng(random_state)
+    indices = rng.choice(coords_deg.shape[0], size=max_points, replace=False)
+    return coords_deg[indices]
+
+
 def _summarize_clusters(coords_deg: np.ndarray, labels: np.ndarray) -> Dict[int, ClusterSummary]:
     """根据标签计算簇中心和计数，忽略噪声标签 -1。"""
 
@@ -76,13 +87,16 @@ def _summarize_clusters(coords_deg: np.ndarray, labels: np.ndarray) -> Dict[int,
 
 
 def cluster_dbscan(
-    samples: MutableMapping[str, Iterable[dict]], *, eps_km: float = 80.0, min_samples: int = 10
+    samples: MutableMapping[str, Iterable[dict]], *, eps_km: float = 80.0, min_samples: int = 10,
+    max_points: int | None = 20000, random_state: int = 42
 ) -> Tuple[np.ndarray, Dict[int, ClusterSummary]]:
     """使用 Haversine 距离的 DBSCAN 做地理聚类。
 
     参数说明：
     - ``eps_km``: 两点被视为同一邻域的最大距离（公里），可按想要的“城市直径”调整。
     - ``min_samples``: 核心点最小邻居数，控制簇的稠密度。
+    - ``max_points``: 当点数超过该值时随机下采样，缓解半径查询的内存消耗；``None`` 表示不采样。
+    - ``random_state``: 下采样的随机种子，便于复现。
 
     返回 ``(labels, summaries)``，其中 ``labels`` 与输入样本顺序一一对应。
     """
@@ -91,11 +105,25 @@ def cluster_dbscan(
     if coords_deg.size == 0:
         return np.array([]), {}
 
+    if max_points is not None and coords_deg.shape[0] > max_points:
+        print(
+            f"采样点数从 {coords_deg.shape[0]} 缩减到 {max_points} 以避免 DBSCAN 半径搜索过大内存。"
+        )
+    coords_deg = _downsample(coords_deg, max_points=max_points, random_state=random_state)
+
     coords_rad = np.radians(coords_deg)
     eps = eps_km / EARTH_RADIUS_KM
 
-    model = DBSCAN(eps=eps, min_samples=min_samples, metric="haversine")
-    labels = model.fit_predict(coords_rad)
+    coords_rad = coords_rad.astype(np.float32, copy=False)
+
+    model = DBSCAN(eps=eps, min_samples=min_samples, metric="haversine", algorithm="ball_tree")
+
+    try:
+        labels = model.fit_predict(coords_rad)
+    except MemoryError as exc:  # pragma: no cover - 运行时防御
+        raise MemoryError(
+            "DBSCAN 内存不足：可尝试减小 eps_km、调小 max_points 做更激进的下采样，或改用 KMeans。"
+        ) from exc
 
     return labels, _summarize_clusters(coords_deg, labels)
 
@@ -158,11 +186,15 @@ def save_cluster_result(
     return filename
 
 
-def demo_dbscan(*, eps_km: float = 80.0, min_samples: int = 10) -> Dict[int, ClusterSummary]:
+def demo_dbscan(
+    *, eps_km: float = 80.0, min_samples: int = 10, max_points: int | None = 20000
+) -> Dict[int, ClusterSummary]:
     """读取默认日期数据，跑 DBSCAN，并落盘结果。"""
 
     samples = read_trace_files(six_six_path)
-    labels, summaries = cluster_dbscan(samples, eps_km=eps_km, min_samples=min_samples)
+    labels, summaries = cluster_dbscan(
+        samples, eps_km=eps_km, min_samples=min_samples, max_points=max_points
+    )
 
     noise = int(np.sum(labels == -1)) if labels.size else 0
     save_cluster_result(
