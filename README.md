@@ -6,18 +6,28 @@
 
 ## 聚类分析（新增）
 - **DBSCAN**（自动确定簇数，haversine 距离）：
+  *Linux/macOS（bash）*
   ```bash
   python - <<'PY'
   from trace_graph.clustering import demo_dbscan
   demo_dbscan(eps_km=80, min_samples=10)
   PY
   ```
+  *Windows PowerShell*
+  ```powershell
+  python -c "from trace_graph.clustering import demo_dbscan; demo_dbscan(eps_km=80, min_samples=10)"
+  ```
 - **KMeans**（指定簇数，适合 30–40 个“城市”）：
+  *Linux/macOS（bash）*
   ```bash
   python - <<'PY'
   from trace_graph.clustering import demo_kmeans
   demo_kmeans(n_clusters=35)
   PY
+  ```
+  *Windows PowerShell*
+  ```powershell
+  python -c "from trace_graph.clustering import demo_kmeans; demo_kmeans(n_clusters=35)"
   ```
 
 结果会写入 `map_data/<日期>_<算法>_clusters.json`，字段包含簇编号、人数、中心经纬度，可作为后续构图或可视化的输入。
